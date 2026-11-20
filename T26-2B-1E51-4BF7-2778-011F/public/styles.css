@@ -49,6 +49,33 @@ body {
   font-weight: 700;
 }
 
+#discordLoginLink {
+  color: inherit;
+}
+
+#discordAvatar {
+  border-radius: 50%;
+}
+
+#discordUserText {
+  overflow-wrap: anywhere;
+}
+
+.btn-logout {
+  padding: 0.15rem 0.55rem;
+  background: #ffffff;
+  border: 1px solid #93c5fd;
+  border-radius: 999px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.diagnostic-status {
+  font-size: 0.88rem;
+  margin-bottom: 0.75rem;
+}
+
 main {
   flex: 1;
   max-width: 960px;
@@ -121,6 +148,12 @@ h1 {
 
 .btn-primary:hover {
   background: #1e293b;
+}
+
+.btn-primary:disabled,
+.btn-logout:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 .records-list {

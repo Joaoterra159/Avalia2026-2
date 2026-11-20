@@ -1,83 +1,93 @@
-/**
- * Cloudflare Pages Function — /api/status
- * Verifica conectividade com o Cloudflare D1, sessão Discord OAuth2 e permite registrar pings de diagnóstico.
- */
-export async function onRequest(context) {
-  const { request, env } = context;
-  const chave = "T26-2B-1E51-4BF7-2778-011F";
-  const projectId = 0;
-  const projectTitle = "Projeto 0 (Teste de Ambiente e Entrega — Sem Nota): Painel de Diagnóstico Cloudflare + D1 + Discord";
+import { discordConfigured, findSessionUser, nowSeconds, sameOrigin, sessionTokenHash } from "../_discord-session.js";
 
-  // Lê sessão real do Discord a partir do cookie HttpOnly se autenticado
-  const cookieHeader = request.headers.get("Cookie") || "";
+const chave = "T26-2B-1E51-4BF7-2778-011F";
+const projectId = 0;
+const projectTitle = "Projeto 0 (Teste de Ambiente e Entrega — Sem Nota): Painel de Diagnóstico Cloudflare + D1 + Discord";
+
+function json(data, status = 200, extraHeaders = {}) {
+  return Response.json(data, {
+    status,
+    headers: { "Cache-Control": "no-store", ...extraHeaders },
+  });
+}
+
+function unauthorized() {
+  return json({ ok: false, error: "Entre com Discord para registrar um ping." }, 401);
+}
+
+async function readStatus(request, env) {
+  let d1Connected = false;
   let sessionUser = null;
-  const sessionMatch = cookieHeader.match(/discord_session=([^;]+)/);
-  if (sessionMatch) {
+  let totalRegistros = 0;
+  let ultimosRegistros = [];
+
+  if (env.DB) {
     try {
-      sessionUser = JSON.parse(decodeURIComponent(atob(sessionMatch[1])));
-    } catch {}
-  }
-
-  if (request.method === "GET") {
-    let dbConnected = false;
-    let totalRegistros = 0;
-    let ultimosRegistros = [];
-
-    if (env.DB) {
-      try {
-        await env.DB.prepare(
-          "CREATE TABLE IF NOT EXISTS project_records (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, chave_projeto TEXT NOT NULL, conteudo TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-        ).run();
-        const countRow = await env.DB.prepare("SELECT COUNT(*) AS total FROM project_records").first();
-        const listRes = await env.DB.prepare("SELECT id, user_id, username, conteudo, created_at FROM project_records ORDER BY id DESC LIMIT 10").all();
-        dbConnected = true;
-        totalRegistros = Number(countRow?.total || 0);
-        ultimosRegistros = listRes.results || [];
-      } catch (err) {
-        dbConnected = false;
+      const user = await findSessionUser(env.DB, await sessionTokenHash(request));
+      if (user) {
+        const [count, records] = await env.DB.batch([
+          env.DB.prepare("SELECT COUNT(*) AS total FROM project_records WHERE chave_projeto = ? AND user_id = ?")
+            .bind(chave, user.userId),
+          env.DB.prepare(
+            "SELECT id, user_id, username, conteudo, created_at FROM project_records " +
+            "WHERE chave_projeto = ? AND user_id = ? ORDER BY id DESC LIMIT 10"
+          ).bind(chave, user.userId),
+        ]);
+        totalRegistros = Number(count.results[0].total);
+        ultimosRegistros = records.results;
+        sessionUser = user;
+      } else {
+        await env.DB.prepare("SELECT 1 FROM project_records LIMIT 1").first();
       }
+      d1Connected = true;
+    } catch {
+      // O diagnóstico permanece disponível mesmo quando o D1 falha.
     }
-
-    return Response.json({
-      ok: true,
-      chave,
-      projectId,
-      projectTitle,
-      d1Connected: dbConnected,
-      discordOAuthConfigured: Boolean(env.DISCORD_CLIENT_ID),
-      sessionUser,
-      totalRegistros,
-      ultimosRegistros,
-      serverTimestamp: new Date().toISOString(),
-    });
   }
 
-  if (request.method === "POST") {
-    const body = await request.json().catch(() => ({}));
-    const userId = String(body.userId || "discord_demo_user").trim().slice(0, 64);
-    const username = String(body.username || "Estudante").trim().slice(0, 80);
-    const conteudo = String(body.conteudo || "").trim().slice(0, 500);
+  return json({
+    ok: true,
+    chave,
+    projectId,
+    projectTitle,
+    d1Connected,
+    discordOAuthConfigured: discordConfigured(env),
+    sessionUser,
+    totalRegistros,
+    ultimosRegistros,
+    serverTimestamp: new Date().toISOString(),
+  });
+}
 
-    if (!conteudo) {
-      return Response.json({ ok: false, error: "Conteúdo obrigatório." }, { status: 400 });
+async function savePing(request, env) {
+  if (!sameOrigin(request)) return json({ ok: false, error: "Origem inválida." }, 403);
+  const tokenHash = await sessionTokenHash(request);
+  if (!tokenHash) return unauthorized();
+
+  try {
+    if (!await findSessionUser(env.DB, tokenHash)) return unauthorized();
+
+    const body = await request.json().catch(() => null);
+    const conteudo = typeof body?.conteudo === "string" ? body.conteudo.trim() : "";
+    if (!conteudo || conteudo.length > 500) {
+      return json({ ok: false, error: "Informe um conteúdo de 1 a 500 caracteres." }, 400);
     }
 
-    if (env.DB) {
-      await env.DB.prepare(
-        "CREATE TABLE IF NOT EXISTS project_records (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, username TEXT NOT NULL, chave_projeto TEXT NOT NULL, conteudo TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-      ).run();
-      await env.DB.prepare(
-        "INSERT INTO project_records (user_id, username, chave_projeto, conteudo) VALUES (?, ?, ?, ?)"
-      ).bind(userId, username, chave, conteudo).run();
-    }
-
-    return Response.json({
-      ok: true,
-      saved: Boolean(env.DB),
-      chave,
-      serverTimestamp: new Date().toISOString(),
-    }, { status: 201 });
+    const inserted = await env.DB.prepare(
+      "INSERT INTO project_records (user_id, username, chave_projeto, conteudo) " +
+      "SELECT u.user_id, u.username, ?, ? FROM discord_sessions s " +
+      "JOIN discord_users u ON u.user_id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?"
+    ).bind(chave, conteudo, tokenHash, nowSeconds()).run();
+    if (inserted.meta.changes !== 1) return unauthorized();
+  } catch {
+    return json({ ok: false, error: "Não foi possível registrar o ping no D1." }, 503);
   }
 
-  return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
+  return json({ ok: true, saved: true, chave, serverTimestamp: new Date().toISOString() }, 201);
+}
+
+export async function onRequest({ request, env }) {
+  if (request.method === "GET") return readStatus(request, env);
+  if (request.method === "POST") return savePing(request, env);
+  return json({ ok: false, error: "Método não permitido." }, 405, { Allow: "GET, POST" });
 }

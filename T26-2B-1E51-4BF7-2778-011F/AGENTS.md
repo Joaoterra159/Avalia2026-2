@@ -4,31 +4,31 @@
 
 ## 1. Ambiente de Orquestração (Harness Utilizado)
 
-- **Harness Principal:** *(Descreva aqui qual harness foi utilizado, ex: Antigravity / Claude Code / Cursor / Cline / GitHub Copilot Workspace / OpenHands)*
-- **Modelo(s) Base:** *(Informe os modelos utilizados pelos agentes)*
-- **Estratégia de Coordenação:** Os agentes operaram de forma modular sobre a subpasta `T26-2B-1E51-4BF7-2778-011F/`, compartilhando especificações de banco de dados D1, contratos JSON das Cloudflare Pages Functions e verificação automatizada via `validar-local.mjs`.
+- **Harness Principal:** Codex com três subagentes em um workspace compartilhado.
+- **Modelo(s) Base:** GPT-6 no agente principal. Os três subagentes herdaram o modelo e a configuração da sessão.
+- **Estratégia de Coordenação:** O agente principal delegou Backend, Frontend e Testes em turnos independentes. Os agentes compartilharam o contrato das rotas de sessão e diagnóstico dentro da subpasta do Projeto 0.
 
 ---
 
 ## 2. Agentes Criados e Responsabilidades (Mínimo de 3 Agentes)
 
-### Agente 1: Arquiteto Serverless, Cloudflare D1 e Segurança Discord OAuth2
-- **Papel:** Modelagem do esquema relacional SQLite no Cloudflare D1 (`migrations/0001_init.sql`), implementação do fluxo de autenticação Discord OAuth2 e validação das regras de negócio no servidor (`functions/`).
+### Agente 1: Backend (`/root/backend`)
+- **Papel:** Implementação da sessão no Cloudflare D1, do fluxo Discord OAuth2 e das validações nas Pages Functions.
 - **Skill Utilizada:** [`skills/serverless-d1-discord/SKILL.md`](./skills/serverless-d1-discord/SKILL.md)
 - **Entregas Realizadas:**
-  - Estruturação das tabelas e índices no Cloudflare D1.
-  - Proteção das rotas serverless contra manipulação no cliente.
+  - Implementação do `state` de uso único, da sessão com expiração e revogação e da migração `0002_discord_sessions.sql`.
+  - Associação dos pings à identidade da sessão e consulta por usuário e projeto.
 
-### Agente 2: Especialista em Interface Web Vanilla (HTML5, CSS3 e DOM)
+### Agente 2: Frontend (`/root/frontend`)
 - **Papel:** Construção da interface responsiva e acessível utilizando exclusivamente HTML5 semântico, CSS3 moderno (sem sombras em fontes) e JavaScript puro (Vanilla JS), consumindo as rotas serverless via `fetch`.
 - **Skill Utilizada:** [`skills/vanilla-dom-ui/SKILL.md`](./skills/vanilla-dom-ui/SKILL.md)
 - **Entregas Realizadas:**
-  - Componentes visuais em `public/index.html`, `public/styles.css` e `public/app.js`.
-  - Inclusão do cabeçalho de perfil do Discord (`user_id`, nome e avatar) e rodapé oficial com a Chave Única `T26-2B-1E51-4BF7-2778-011F`.
+  - Integração do login, perfil, logout e pings autenticados em `public/index.html`, `public/styles.css` e `public/app.js`.
+  - Verificação de três fluxos de interface com DOM e `fetch` simulados.
 
-### Agente 3: Agente de Teste, Auditoria de Segurança e Validação (Obrigatório)
-- **Papel:** Verificação independente de ponta a ponta: inspeção de contratos de API, tentativa de contorno das validações do servidor, auditoria da rubrica de 100 pontos e execução de testes funcionais.
+### Agente 3: Agente de Teste, Auditoria de Segurança e Validação (`/root/testes`)
+- **Papel:** Validação independente do contrato HTTP, das migrações e do isolamento entre usuários.
 - **Skill Utilizada:** [`skills/teste-validacao/SKILL.md`](./skills/teste-validacao/SKILL.md)
 - **Entregas Realizadas:**
-  - Bateria de verificação de integridade dos endpoints e conformidade com a rubrica (`validar-local.mjs` e casos de teste documentados abaixo).
-  - Relatório de validação confirmando ausência de frameworks proibidos, presença da licença MIT e funcionamento no Cloudflare.
+  - Suíte de regressão em `testar-oauth-local.mjs` com as Functions reais, SQLite e respostas simuladas do Discord.
+  - Evidências e limites da validação em [TESTES.md](./TESTES.md).
