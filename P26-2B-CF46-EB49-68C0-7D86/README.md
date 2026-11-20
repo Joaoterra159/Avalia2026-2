@@ -4,7 +4,7 @@
 - **Estudante:** João Pedro Marques Terra
 - **Turma:** 2B
 - **Chave Única:** `P26-2B-CF46-EB49-68C0-7D86`
-- **URL_CLOUDFLARE:** `https://p26-2b-cf46-eb49-68c0-7d86.pages.dev` *(URL prevista, pendente de confirmação no deploy)*
+- **URL_CLOUDFLARE:** `https://refhub-projeto-23.pages.dev`
 
 ---
 
@@ -40,7 +40,7 @@ Através da autenticação OAuth2 do Discord, o estudante salva suas referência
    - Na aba **OAuth2**:
      - Copie o **Client ID** e gere o **Client Secret**.
      - Em **Redirects**, adicione a URL exata do deploy:
-       `https://p26-2b-cf46-eb49-68c0-7d86.pages.dev/api/auth/discord/callback`
+       `https://refhub-projeto-23.pages.dev/api/auth/discord/callback`
    - No painel do seu projeto no Cloudflare Pages:
      - Acesse **Settings** → **Environment variables**.
      - Adicione as variáveis de ambiente:
