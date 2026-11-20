@@ -10,5 +10,9 @@
       "database_name": "db-projeto-23-referencias",
       "database_id": "0c90240d-f49d-4e65-9219-74f8c7677d55"
     }
-  ]
+  ],
+  "vars": {
+    "DISCORD_CLIENT_ID": "1573277237652889671",
+    "DISCORD_REDIRECT_URI": "https://refhub-projeto-23.pages.dev/api/auth/discord/callback"
+  }
 }
