@@ -90,3 +90,47 @@ O Codex acionou `/root/backend_transport` e `/root/testes_transport`. O evento i
 O backend passou a usar `redirect: 'manual'` e rejeita 3xx. O evento mantém o status e informa, para exceções anteriores à resposta, a categoria de preparação, fetch ou timeout e um nome de uma lista permitida. Nomes desconhecidos são registrados como UnknownError. O código não registra mensagens de exceção, credenciais ou dados sensíveis do fluxo.
 
 Passaram 22 testes OAuth e 44 testes na suíte em série, com Discord simulado, SQLite e Chromium. A sonda demonstra a falha local antes de qualquer comunicação com o Discord. O fluxo corrigido em produção permanece sem verificação. Esta etapa não realizou commit, push ou deploy.
+
+## Validação final em produção — 20/11/2026
+
+### Correção e autenticação Discord OAuth2
+
+- Identificada e reproduzida incompatibilidade da opção `redirect: 'error'` com o runtime Cloudflare Workers.
+- Corrigida a requisição utilizando `redirect: 'manual'`, com rejeição explícita de redirecionamentos HTTP 3xx.
+- Login real com Discord OAuth2 confirmado na aplicação publicada.
+- Nome de usuário e avatar carregados corretamente após a autenticação.
+
+### Testes funcionais em produção
+
+- Criação e persistência de projetos confirmadas após atualização da página.
+- Geração de referências bibliográficas ABNT e IEEE verificada.
+- Testados os tipos de fonte: livros, artigos científicos e páginas da web.
+- Cadastro, edição, exclusão e persistência de referências confirmados.
+- Compilação de bibliografia em ordem alfabética verificada.
+- Cópia da bibliografia em texto simples realizada com sucesso.
+
+### Validação automatizada e entrega
+
+- Suíte automatizada: **44 testes aprovados**.
+- Validador oficial `validar-local.mjs`: **9 de 9 critérios aprovados**.
+- Pull Request oficial criado exclusivamente com os arquivos do Projeto 23.
+- Verificação automática do GitHub concluída com sucesso.
+- Pull Request aguardando avaliação do professor.
+
+**Aplicação publicada:** https://refhub-projeto-23.pages.dev
+
+**Chave única:** `P26-2B-CF46-EB49-68C0-7D86`
+
+**Observação:** os testes funcionais descritos foram realizados manualmente na aplicação publicada. A aprovação do validador estrutural e das verificações automáticas não equivale à atribuição da nota final.
+
+### Auditoria de segurança da entrega
+
+- Auditoria realizada na branch `entrega-projeto-23`.
+- Inspecionados 63 arquivos rastreados e 176 conteúdos distintos em 23 commits.
+- Nenhuma credencial real identificada nos arquivos ou no histórico analisado.
+- Identificadores públicos, referências a variáveis de ambiente e credenciais fictícias de testes foram classificados separadamente.
+- Confirmada a ausência da pasta do Projeto 0 no Pull Request oficial.
+- Nenhuma rotação de credenciais ou reescrita do histórico foi considerada necessária.
+- Segredos de produção permanecem configurados no ambiente privado da Cloudflare.
+
+**Resultado:** nenhuma exposição de credenciais identificada no escopo auditado.
