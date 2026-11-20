@@ -4,7 +4,7 @@
 - **Estudante:** João Pedro Marques Terra
 - **Turma:** 2B
 - **Chave Única:** `T26-2B-1E51-4BF7-2778-011F`
-- **URL_CLOUDFLARE:** `https://t26-2b-1e51-4bf7-2778-011f.pages.dev` *(Atualize com a URL pública real do seu deploy na Cloudflare antes de abrir o Pull Request)*
+- **URL_CLOUDFLARE:** `https://projeto-0-diagnostico.pages.dev` *(Atualize com a URL pública real do seu deploy na Cloudflare antes de abrir o Pull Request)*
 
 ---
 
