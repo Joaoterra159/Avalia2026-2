@@ -187,15 +187,17 @@ test("troca do código registra somente status e erro OAuth permitido", async (t
     { status: 400, error: "invalid_request" },
     { status: 502, error: "fixture-raw-provider-value", omitError: true },
     { status: 503, nonJson: true, omitError: true },
-    { transportFailure: true, omitError: true },
+    { status: 302, redirect: true, omitError: true },
   ];
 
   for (const fixture of cases) {
-    await t.test(fixture.error || (fixture.transportFailure ? "sem resposta HTTP" : "resposta sem JSON"), async (t) => {
+    await t.test(fixture.error || (fixture.redirect ? "redirecionamento não seguido" : "resposta sem JSON"), async (t) => {
       const qa = makeHarness(t);
       const warning = t.mock.method(console, "warn", () => {});
       const provider = t.mock.method(globalThis, "fetch", async () => {
-        if (fixture.transportFailure) throw new Error("fixture-raw-transport-error");
+        if (fixture.redirect) return new Response(null, {
+          status: fixture.status, headers: { Location: "https://redirect.example.test/fixture-private" },
+        });
         if (fixture.nonJson) return new Response("fixture-raw-response", { status: fixture.status });
         return Response.json({
           error: fixture.error,
@@ -215,7 +217,7 @@ test("troca do código registra somente status e erro OAuth permitido", async (t
       const [url, request] = provider.mock.calls[0].arguments;
       assert.equal(String(url), "https://discord.com/api/oauth2/token");
       assert.equal(request.method, "POST");
-      assert.equal(request.redirect, "error");
+      assert.equal(request.redirect, "manual");
       assert.equal(new Headers(request.headers).get("content-type"), "application/x-www-form-urlencoded");
       const verifier = request.body.get("code_verifier");
       assert.match(verifier, /^[A-Za-z0-9_-]{43}$/u);
@@ -235,6 +237,46 @@ test("troca do código registra somente status e erro OAuth permitido", async (t
   }
 });
 
+test("troca do código distingue preparação, fetch e timeout sem dados da exceção", async (t) => {
+  const cases = [
+    { category: "preparation", error: new ReferenceError("fixture-private-preparation") },
+    { category: "fetch", error: new TypeError("fixture-private-fetch") },
+    { category: "fetch", error: new DOMException("fixture-private-abort", "AbortError") },
+    { category: "fetch", error: { name: "fixture-private-custom", message: "fixture-private-fetch" }, name: "UnknownError" },
+    { category: "timeout", error: new DOMException("fixture-private-timeout", "TimeoutError") },
+  ];
+  for (const fixture of cases) {
+    await t.test(fixture.category + ": " + (fixture.name || fixture.error.name), async (t) => {
+      const qa = makeHarness(t);
+      const warning = t.mock.method(console, "warn", () => {});
+      const attempt = await qa.begin();
+      const deadline = new AbortController();
+      const timeout = t.mock.method(AbortSignal, "timeout", () => {
+        if (fixture.category === "preparation") throw fixture.error;
+        return deadline.signal;
+      });
+      const outbound = t.mock.method(globalThis, "fetch", async (_url, options) => {
+        assert.equal(options.signal, deadline.signal);
+        assert.equal(options.signal.aborted, false);
+        if (fixture.category === "timeout") deadline.abort(fixture.error);
+        throw fixture.error;
+      });
+
+      assertCallbackFailure(await qa.complete(attempt));
+      assertCallbackDiagnostic(warning, {
+        stage: "token_exchange",
+        httpStatus: null,
+        category: fixture.category,
+        exceptionName: fixture.name || fixture.error.name,
+      });
+      assert.equal(timeout.mock.callCount(), 1);
+      assert.equal(timeout.mock.calls[0].arguments[0], 8000);
+      assert.equal(outbound.mock.callCount(), fixture.category === "preparation" ? 0 : 1);
+      assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 0);
+      assert.equal((await qa.complete(attempt)).headers.get("Location"), "/?auth=invalid");
+    });
+  }
+});
 test("callback rejeita resposta de token sem credencial utilizável", async (t) => {
   const qa = makeHarness(t);
   const warning = t.mock.method(console, "warn", () => {});

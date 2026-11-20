@@ -64,18 +64,35 @@ class DiscordOAuthError extends Error {
   }
 }
 
-async function discordJson(path, init, requestStage, responseStage) {
+const exceptionNames = new Set([
+  'Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'AbortError',
+  'TimeoutError', 'NetworkError', 'SecurityError', 'NotSupportedError',
+]);
+
+function discordRequestError(stage, category, failure) {
+  const name = failure?.name;
+  const exceptionName = exceptionNames.has(name) ? name : 'UnknownError';
+  return new DiscordOAuthError(stage, { httpStatus: null, category, exceptionName });
+}
+
+async function discordJson(path, makeInit, requestStage, responseStage) {
+  let init;
+  try {
+    // Workers supports manual redirects. A non-2xx response below stops the request.
+    init = { ...makeInit(), redirect: 'manual', signal: AbortSignal.timeout(8000) };
+  } catch (failure) {
+    throw discordRequestError(requestStage, 'preparation', failure);
+  }
+
   let response;
   try {
-    response = await fetch(issuer + path, {
-      ...init, redirect: 'error', signal: AbortSignal.timeout(8000),
-    });
-  } catch {
-    throw new DiscordOAuthError(requestStage, requestStage === 'token_exchange' ? { httpStatus: null } : {});
+    response = await fetch(issuer + path, init);
+  } catch (failure) {
+    throw discordRequestError(requestStage, init.signal.aborted ? 'timeout' : 'fetch', failure);
   }
   if (!response.ok) {
     const diagnostic = { httpStatus: response.status };
-    if (requestStage === 'token_exchange') {
+    if (requestStage === 'token_exchange' && (response.status < 300 || response.status >= 400)) {
       const payload = await response.json().catch(() => null);
       if (oauthErrors.has(payload?.error)) diagnostic.oauthError = payload.error;
     }
@@ -111,21 +128,21 @@ function profileFrom(data) {
 }
 
 async function fetchProfile(config, code, verifier) {
-  const token = await discordJson('/api/oauth2/token', {
+  const token = await discordJson('/api/oauth2/token', () => ({
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: config.clientId, client_secret: config.clientSecret, grant_type: 'authorization_code',
       redirect_uri: config.redirectUri, code, code_verifier: verifier,
     }),
-  }, 'token_exchange', 'token_response');
+  }), 'token_exchange', 'token_response');
   if (typeof token?.access_token !== 'string' || !/^[A-Za-z0-9._~+/=-]{1,2048}$/u.test(token.access_token) ||
       typeof token.token_type !== 'string' || token.token_type.toLowerCase() !== 'bearer' ||
       typeof token.scope !== 'string' || !token.scope.split(/\s+/u).includes('identify')) throw new DiscordOAuthError('token_response');
 
-  return profileFrom(await discordJson('/api/v10/users/@me', {
+  return profileFrom(await discordJson('/api/v10/users/@me', () => ({
     headers: { Authorization: 'Bearer ' + token.access_token },
-  }, 'profile_request', 'profile_response'));
+  }), 'profile_request', 'profile_response'));
 }
 
 async function createSession(db, profile, request) {
