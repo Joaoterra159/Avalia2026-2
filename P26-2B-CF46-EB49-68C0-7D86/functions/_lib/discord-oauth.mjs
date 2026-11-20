@@ -71,7 +71,7 @@ async function discordJson(path, init, requestStage, responseStage) {
       ...init, redirect: 'error', signal: AbortSignal.timeout(8000),
     });
   } catch {
-    throw new DiscordOAuthError(requestStage);
+    throw new DiscordOAuthError(requestStage, requestStage === 'token_exchange' ? { httpStatus: null } : {});
   }
   if (!response.ok) {
     const diagnostic = { httpStatus: response.status };

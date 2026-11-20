@@ -180,6 +180,61 @@ function assertCallbackFailure(response) {
   assert.equal(cookie(response, sessionName), undefined);
 }
 
+test("troca do código registra somente status e erro OAuth permitido", async (t) => {
+  const cases = [
+    { status: 401, error: "invalid_client" },
+    { status: 400, error: "invalid_grant" },
+    { status: 400, error: "invalid_request" },
+    { status: 502, error: "fixture-raw-provider-value", omitError: true },
+    { status: 503, nonJson: true, omitError: true },
+    { transportFailure: true, omitError: true },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.error || (fixture.transportFailure ? "sem resposta HTTP" : "resposta sem JSON"), async (t) => {
+      const qa = makeHarness(t);
+      const warning = t.mock.method(console, "warn", () => {});
+      const provider = t.mock.method(globalThis, "fetch", async () => {
+        if (fixture.transportFailure) throw new Error("fixture-raw-transport-error");
+        if (fixture.nonJson) return new Response("fixture-raw-response", { status: fixture.status });
+        return Response.json({
+          error: fixture.error,
+          error_description: "fixture-raw-provider-description",
+          access_token: "fixture-raw-token",
+        }, { status: fixture.status });
+      });
+      const attempt = await qa.begin();
+      assertCallbackFailure(await qa.complete(attempt));
+      assertCallbackDiagnostic(warning, {
+        stage: "token_exchange",
+        httpStatus: fixture.status ?? null,
+        ...(fixture.omitError ? {} : { oauthError: fixture.error }),
+      });
+
+      assert.equal(provider.mock.callCount(), 1);
+      const [url, request] = provider.mock.calls[0].arguments;
+      assert.equal(String(url), "https://discord.com/api/oauth2/token");
+      assert.equal(request.method, "POST");
+      assert.equal(request.redirect, "error");
+      assert.equal(new Headers(request.headers).get("content-type"), "application/x-www-form-urlencoded");
+      const verifier = request.body.get("code_verifier");
+      assert.match(verifier, /^[A-Za-z0-9_-]{43}$/u);
+      assert.equal(createHash("sha256").update(verifier).digest("base64url"), attempt.challenge);
+      assert.deepEqual(Object.fromEntries(request.body), {
+        client_id: qa.env.DISCORD_CLIENT_ID,
+        client_secret: qa.env.DISCORD_CLIENT_SECRET,
+        grant_type: "authorization_code",
+        redirect_uri: qa.env.DISCORD_REDIRECT_URI,
+        code: "fixture-authorization-code",
+        code_verifier: verifier,
+      });
+      assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 0);
+      assert.equal((await qa.complete(attempt)).headers.get("Location"), "/?auth=invalid");
+      assert.equal(provider.mock.callCount(), 1);
+    });
+  }
+});
+
 test("callback rejeita resposta de token sem credencial utilizável", async (t) => {
   const qa = makeHarness(t);
   const warning = t.mock.method(console, "warn", () => {});
