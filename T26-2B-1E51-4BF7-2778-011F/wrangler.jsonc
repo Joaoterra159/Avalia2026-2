@@ -1,3 +1,4 @@
+
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "projeto-t26-2b-1e51-4bf7-2778-011f",
@@ -6,8 +7,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "db-t26-2b-1e51-4bf7-2778-011f",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_name": "db-projeto-0-diagnostico",
+      "database_id": "6e3903c6-ee5d-41ea-ac92-b5306cb27960"
     }
   ]
 }
