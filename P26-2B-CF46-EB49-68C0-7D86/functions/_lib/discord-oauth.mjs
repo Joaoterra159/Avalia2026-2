@@ -52,12 +52,40 @@ async function login(config) {
   return redirect(issuer + '/oauth2/authorize?' + query, 302, [opaqueCookie(attemptCookie, browserToken, attemptSeconds)]);
 }
 
-async function discordJson(path, init) {
-  const response = await fetch(issuer + path, {
-    ...init, redirect: 'error', signal: AbortSignal.timeout(8000),
-  });
-  if (!response.ok) throw new Error('Discord request failed');
-  return response.json();
+const oauthErrors = new Set([
+  'invalid_request', 'invalid_client', 'invalid_grant', 'unauthorized_client',
+  'unsupported_grant_type', 'invalid_scope', 'server_error', 'temporarily_unavailable',
+]);
+
+class DiscordOAuthError extends Error {
+  constructor(stage, diagnostic = {}) {
+    super(stage);
+    this.diagnostic = { stage, ...diagnostic };
+  }
+}
+
+async function discordJson(path, init, requestStage, responseStage) {
+  let response;
+  try {
+    response = await fetch(issuer + path, {
+      ...init, redirect: 'error', signal: AbortSignal.timeout(8000),
+    });
+  } catch {
+    throw new DiscordOAuthError(requestStage);
+  }
+  if (!response.ok) {
+    const diagnostic = { httpStatus: response.status };
+    if (requestStage === 'token_exchange') {
+      const payload = await response.json().catch(() => null);
+      if (oauthErrors.has(payload?.error)) diagnostic.oauthError = payload.error;
+    }
+    throw new DiscordOAuthError(requestStage, diagnostic);
+  }
+  try {
+    return await response.json();
+  } catch {
+    throw new DiscordOAuthError(responseStage);
+  }
 }
 
 function profileFrom(data) {
@@ -66,7 +94,7 @@ function profileFrom(data) {
   const displayName = data?.global_name || username;
   const validName = value => typeof value === 'string' && value.trim() && value.length <= 128 && !/[\u0000-\u001f\u007f]/u.test(value);
   if (typeof id !== 'string' || !/^[1-9]\d{0,19}$/u.test(id) || !validName(username) || !validName(displayName)) {
-    throw new Error('Invalid Discord profile');
+    throw new DiscordOAuthError('profile_response');
   }
 
   const cdn = 'https://cdn.discordapp.com';
@@ -90,14 +118,14 @@ async function fetchProfile(config, code, verifier) {
       client_id: config.clientId, client_secret: config.clientSecret, grant_type: 'authorization_code',
       redirect_uri: config.redirectUri, code, code_verifier: verifier,
     }),
-  });
+  }, 'token_exchange', 'token_response');
   if (typeof token?.access_token !== 'string' || !/^[A-Za-z0-9._~+/=-]{1,2048}$/u.test(token.access_token) ||
       typeof token.token_type !== 'string' || token.token_type.toLowerCase() !== 'bearer' ||
-      typeof token.scope !== 'string' || !token.scope.split(/\s+/u).includes('identify')) throw new Error('Invalid Discord token response');
+      typeof token.scope !== 'string' || !token.scope.split(/\s+/u).includes('identify')) throw new DiscordOAuthError('token_response');
 
   return profileFrom(await discordJson('/api/v10/users/@me', {
     headers: { Authorization: 'Bearer ' + token.access_token },
-  }));
+  }, 'profile_request', 'profile_response'));
 }
 
 async function createSession(db, profile, request) {
@@ -115,10 +143,16 @@ async function createSession(db, profile, request) {
   ];
   const previousToken = readOpaqueCookie(request, sessionCookie);
   if (previousToken) {
-    statements.push(db.prepare('UPDATE sessions SET revoked_at = unixepoch() WHERE token_hash = ? AND revoked_at IS NULL')
-      .bind(await tokenHash(previousToken)));
+    statements.push(db.prepare(
+      'UPDATE sessions SET revoked_at = unixepoch() WHERE token_hash = ? AND revoked_at IS NULL ' +
+      'AND EXISTS (SELECT 1 FROM sessions WHERE token_hash = ?)'
+    ).bind(await tokenHash(previousToken), hash));
   }
-  await db.batch(statements);
+  const results = await db.batch(statements);
+  const sessionWrite = results[1];
+  if (!sessionWrite?.success || Number(sessionWrite.meta?.changes) !== 1) {
+    throw new DiscordOAuthError('session_write');
+  }
   return opaqueCookie(sessionCookie, token, sessionSeconds);
 }
 
@@ -147,7 +181,10 @@ async function callback(request, url, config) {
     const profile = await fetchProfile(config, code, attempt.code_verifier);
     cookies.push(await createSession(config.db, profile, request));
     return finish('', cookies);
-  } catch {
+  } catch (failure) {
+    // Keep request data, provider bodies and raw exceptions out of the logs.
+    const diagnostic = failure instanceof DiscordOAuthError ? failure.diagnostic : { stage: 'session_write' };
+    console.warn('discord_oauth_callback_failed', diagnostic);
     return finish('failed', cookies);
   }
 }

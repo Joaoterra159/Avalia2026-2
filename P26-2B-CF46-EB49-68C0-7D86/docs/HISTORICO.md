@@ -62,3 +62,15 @@ O agente principal do Codex integrou a aplicação à pasta `P26-2B-CF46-EB49-68
 - A prévia `wrangler pages dev public` serviu a página com a chave oficial (200), retornou visitante em `/api/session` e rejeitou `/api/projects` sem sessão (401). As rotas de login e callback chegaram ao roteador ativo e redirecionaram com 303 para `/?auth=unavailable` na ausência de configuração OAuth.
 - O validador oficial, executado na raiz do repositório com a chave do Projeto #23, aprovou os oito critérios locais. O item 9, deploy online, ficou pendente. Na primeira execução, a detecção de agentes ficou pendente porque o documento usava uma tabela sem títulos individuais. A repetição após a inclusão dos títulos aprovou esse critério.
 - A conferência SHA-256 confirmou a preservação dos nove arquivos arquivados, da licença MIT e da migração oficial. A árvore ativa de Functions contém apenas o roteador bibliográfico e seus dois módulos auxiliares.
+
+## 20 de novembro de 2026 | Investigação do callback Discord em produção
+
+O agente principal iniciou `/root/backend23` e `/root/testes23` no harness Codex. Eles aplicaram, respectivamente, `backend-referencias` e `testes-referencias`. A investigação partiu da revisão `9251527`.
+
+No código inspecionado, o HTTP 303 com `/?auth=failed` e a limpeza do cookie temporário só ocorre após configuração aceita, validação de parâmetros e consumo no D1 de uma tentativa válida vinculada ao navegador. A URI configurada precisa coincidir com a origem HTTPS e o caminho do callback. A requisição de troca usa a mesma URI da autorização e o verificador PKCE armazenado. O sintoma, sozinho, não comprova que o Discord aceitou essa requisição. Erros na troca, na leitura ou validação do token e do perfil, e na gravação da sessão convergem para o mesmo redirecionamento.
+
+O Backend adicionou o evento interno `discord_oauth_callback_failed` com uma etapa fixa (`token_exchange`, `token_response`, `profile_request`, `profile_response` ou `session_write`). O evento pode incluir o status HTTP do provedor e, na troca, um código OAuth de uma lista permitida. A resposta pública e as verificações de state, PKCE e URI foram preservadas. A emissão do cookie exige uma gravação de sessão confirmada. A revogação da sessão anterior depende da existência da nova no mesmo lote D1.
+
+Testes reproduziu o redirecionamento com falhas simuladas do Discord e do D1. A suíte completa na pasta oficial (`node --test tests/*.test.mjs`, Node.js 26.13.1, Chromium 157.0.8103.79) aprovou 31 testes, com zero falhas e zero cancelamentos. Os nove testes OAuth verificaram a classificação sanitizada, a preservação da sessão anterior quando a nova inserção não produz registro e os fluxos de login, validação e saída. O validador oficial aprovou os oito critérios locais. O item de publicação ficou pendente para a URL indicada no README.
+
+A causa específica da execução em refhub-projeto-23.pages.dev continua sem confirmação. Uma observação futura deve usar apenas os campos sanitizados do evento. A saída completa de logs de requisição pode conter a query do callback. Esta investigação não publicou mudanças nem usou credenciais reais.

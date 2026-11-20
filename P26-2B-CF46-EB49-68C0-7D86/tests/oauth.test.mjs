@@ -145,6 +145,7 @@ test("callback rejeita cancelamento, estado expirado e ausência do cookie de v�
 
 test("falta de configuração e falha do Discord ficam sem sessão", async (t) => {
   const qa = makeHarness(t);
+  const warning = t.mock.method(console, "warn", () => {});
   const outbound = mockDiscord(t, () => first, { tokenStatus: 503 });
   const disabled = [
     { options: { ...qa.env, DISCORD_CLIENT_SECRET: "" } },
@@ -164,7 +165,88 @@ test("falta de configuração e falha do Discord ficam sem sessão", async (t) =
   assert.equal(failure.headers.get("Location"), "/?auth=failed");
   assert.equal(cookie(failure, sessionName), undefined);
   assert.deepEqual(outbound.map(call => call.path), ["token"]);
+  assertCallbackDiagnostic(warning, { stage: "token_exchange", httpStatus: 503 });
   assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 0);
+});
+
+function assertCallbackDiagnostic(warning, detail) {
+  assert.deepEqual(warning.mock.calls.map(call => call.arguments), [["discord_oauth_callback_failed", detail]]);
+}
+
+function assertCallbackFailure(response) {
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get("Location"), "/?auth=failed");
+  assert.match(cookie(response, oauthName), /Max-Age=0/i);
+  assert.equal(cookie(response, sessionName), undefined);
+}
+
+test("callback rejeita resposta de token sem credencial utilizável", async (t) => {
+  const qa = makeHarness(t);
+  const warning = t.mock.method(console, "warn", () => {});
+  const discord = t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ token_type: "Bearer", scope: "identify", extra: "fixture privada" }));
+
+  assertCallbackFailure(await qa.complete(await qa.begin()));
+  assertCallbackDiagnostic(warning, { stage: "token_response" });
+  assert.equal(discord.mock.callCount(), 1);
+  assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 0);
+});
+
+test("callback com state válido rejeita falha ao consultar o perfil Discord", async (t) => {
+  const qa = makeHarness(t);
+  const warning = t.mock.method(console, "warn", () => {});
+  const outbound = mockDiscord(t, () => first, { profileStatus: 403 });
+  const attempt = await qa.begin();
+
+  assertCallbackFailure(await qa.complete(attempt));
+  assertCallbackDiagnostic(warning, { stage: "profile_request", httpStatus: 403 });
+  assert.deepEqual(outbound.map(call => call.path), ["token", "identity"]);
+  assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 0);
+  assert.equal((await qa.complete(attempt)).headers.get("Location"), "/?auth=invalid");
+});
+
+test("callback com state válido rejeita perfil incompatível do Discord", async (t) => {
+  const qa = makeHarness(t);
+  const warning = t.mock.method(console, "warn", () => {});
+  const outbound = mockDiscord(t, () => ({ ...first, id: null }));
+
+  assertCallbackFailure(await qa.complete(await qa.begin()));
+  assertCallbackDiagnostic(warning, { stage: "profile_response" });
+  assert.deepEqual(outbound.map(call => call.path), ["token", "identity"]);
+  assert.equal(qa.db.prepare("SELECT count(*) AS total FROM users").get().total, 0);
+  assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 0);
+});
+
+test("callback com state válido recusa sessão se a escrita no D1 falhar", async (t) => {
+  const warning = t.mock.method(console, "warn", () => {});
+  const qa = makeHarness(t);
+  const outbound = mockDiscord(t, () => first);
+  const attempt = await qa.begin();
+  qa.db.exec("CREATE TRIGGER reject_session BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'fixture D1 failure'); END");
+
+  assertCallbackFailure(await qa.complete(attempt));
+  assertCallbackDiagnostic(warning, { stage: "session_write" });
+  assert.deepEqual(outbound.map(call => call.path), ["token", "identity"]);
+  assert.equal(qa.db.prepare("SELECT count(*) AS total FROM users").get().total, 0);
+  assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 0);
+  assert.equal((await qa.complete(attempt)).headers.get("Location"), "/?auth=invalid");
+});
+
+test("callback recusa sessão se D1 concluir o lote sem criar uma linha", async (t) => {
+  const qa = makeHarness(t);
+  const warning = t.mock.method(console, "warn", () => {});
+  const outbound = mockDiscord(t, () => first);
+  const previousToken = seedSession(qa.db, "Sessão anterior");
+  const previousSession = sessionName + "=" + previousToken;
+  const attempt = await qa.begin();
+  qa.db.exec("CREATE TRIGGER ignore_session BEFORE INSERT ON sessions BEGIN SELECT RAISE(IGNORE); END");
+
+  assertCallbackFailure(await qa.complete(attempt, undefined, previousSession));
+  assertCallbackDiagnostic(warning, { stage: "session_write" });
+  assert.deepEqual(outbound.map(call => call.path), ["token", "identity"]);
+  assert.equal(qa.db.prepare("SELECT count(*) AS total FROM sessions").get().total, 1);
+  const profile = await (await qa.request("/api/session", { browserCookie: previousSession })).json();
+  assert.equal(profile.user.displayName, "Sessão anterior");
 });
 
 test("migração OAuth preserva uma sessão e um usuário preexistentes", async (t) => {
